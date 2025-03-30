@@ -1,0 +1,8 @@
+# Ignore all files in img folder
+img/*
+# Ignore temporary annotated image
+# temporary_annotated.jpg
+# Ignore Python cache
+__pycache__/
+*.py[cod]
+*$py.class
