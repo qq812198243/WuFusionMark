@@ -255,6 +255,13 @@ class MainWindow(QMainWindow):
         img_dir = os.path.join(img_dir, new_filename)
         # 保存结果
         annotator.save_result(output_path=img_dir)
+        # 保存返回的JSON数据
+        json_filename = os.path.splitext(new_filename)[0] + '.json'
+        json_path = os.path.join(os.path.dirname(img_dir), json_filename)
+        with open(json_path, 'w', encoding='utf-8') as json_file:
+            json.dump(result, json_file, ensure_ascii=False, indent=4)
+
+
 
 
 if __name__ == "__main__":
