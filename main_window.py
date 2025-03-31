@@ -11,6 +11,8 @@ from io import BytesIO
 from openai import OpenAI
 import random
 import string
+import threading  # 导入threading模块
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -137,129 +139,144 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.original_preview.setText(f"加载网络图片失败: {str(e)}")
     
-    def start_annotation(self):
-        api_key = self.api_key_input.text().strip()
-        if not api_key:
-            self.original_preview.setText("请输入有效的API密钥")
-            return
-            
-        self.original_preview.setText("正在处理图片...")
-        
-        # 确保img文件夹存在
-        img_dir = os.path.join(os.path.dirname(__file__), self.img_dir_input.text().strip())
-        if not os.path.exists(img_dir):
-            self.original_preview.setText(f"img文件夹不存在: {img_dir}")
-            return
-            
-        client = OpenAI(
-            # 若没有配置环境变量，请用百炼API Key将下行替换为：api_key="sk-xxx",
-            api_key= self.api_key_input.text().strip(),
-            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-            
-        )
-        imgUrl = self.url_input.text().strip()
-        prompt = """
-        输出分辨率时不要让原始图片变形比例要对
-        请按照以下json格式输出：
-        ```json
-        {
-        “image_width”: ,
-        ”image_height“: ,
-        “resolution”[],
-        “objects”: [
-            {
-                ”bbox_2d“: [],
-                “label”:""
-            }
-        ]
-        }
-        ```
+    def start_annotation_thread(self):
+        # 禁用开始标注按钮
+        self.button.setEnabled(False)
 
-        """
-
-        completion = client.chat.completions.create(
-            temperature=0.7,
-            top_p=0.9,
-            model="qwen-vl-max-latest",  # 此处以qwen-vl-plus为例，可按需更换模型名称。模型列表：https://help.aliyun.com/zh/model-studio/getting-started/models
-            messages=[{"role": "user","content": [
-                    {"type": "text","text": prompt},
-                    {"type": "image_url",
-                    "image_url": {"url": imgUrl}}
-                    ]}]
-            )
-        # 显示加载动画
-        self.original_preview.setText("正在处理图片...")
-        self.loading_label.show()
-        
-        # 下载图片
-        response = requests.get(imgUrl)
-        print("completion:", completion.model_dump_json())
-
-        result = completion.choices[0].message.content
-        print("API返回内容:", result)
-
-
-        if response.status_code == 200:
-            temp_image_path = "temporary.jpg"
-            with open(temp_image_path, 'wb') as file:
-                file.write(response.content)
-        else:
-            print(f"Failed to download image. Status code: {response.status_code}")
-        
         try:
 
-            # 使用正则表达式提取 ```json ``` 中间的值
-            pattern = r'```json\s*([\s\S]*?)\s*```'
-            match = re.search(pattern, result)
+            # 将耗时操作封装到一个新的方法中
+            api_key = self.api_key_input.text().strip()
+            if not api_key:
+                self.original_preview.setText("请输入有效的API密钥")
+                return
+                
+            self.original_preview.setText("正在处理图片...")
+            
+            # 确保img文件夹存在
+            img_dir = os.path.join(os.path.dirname(__file__), self.img_dir_input.text().strip())
+            if not os.path.exists(img_dir):
+                self.original_preview.setText(f"img文件夹不存在: {img_dir}")
+                return
+                
+            client = OpenAI(
+                # 若没有配置环境变量，请用百炼API Key将下行替换为：api_key="sk-xxx",
+                api_key= self.api_key_input.text().strip(),
+                base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+                
+            )
+            imgUrl = self.url_input.text().strip()
+            prompt = """
+            输出分辨率时不要让原始图片变形比例要对
+            请按照以下json格式输出：
+            ```json
+            {
+            “image_width”: ,
+            ”image_height“: ,
+            “resolution”[],
+            “objects”: [
+                {
+                    ”bbox_2d“: [],
+                    “label”:""
+                }
+            ]
+            }
+            ```
 
-            if match:
-                json_content = match.group(1)
-                print("提取的JSON内容:", json_content)
-                # 尝试解析JSON
-                result=json.loads(json_content)
+            """
+
+            completion = client.chat.completions.create(
+                temperature=0.7,
+                top_p=0.9,
+                model="qwen-vl-max-latest",  # 此处以qwen-vl-plus为例，可按需更换模型名称。模型列表：https://help.aliyun.com/zh/model-studio/getting-started/models
+                messages=[{"role": "user","content": [
+                        {"type": "text","text": prompt},
+                        {"type": "image_url",
+                        "image_url": {"url": imgUrl}}
+                        ]}]
+                )
+            # 显示加载动画
+            self.original_preview.setText("正在处理图片...")
+            self.loading_label.show()
+            
+            # 下载图片
+            response = requests.get(imgUrl)
+            print("completion:", completion.model_dump_json())
+
+            result = completion.choices[0].message.content
+            print("API返回内容:", result)
+
+
+            if response.status_code == 200:
+                temp_image_path = "temporary.jpg"
+                with open(temp_image_path, 'wb') as file:
+                    file.write(response.content)
             else:
-                print("未找到符合条件的JSON内容")
-                # 尝试解析JSON
-                result=json.loads(result)
-                print("JSON格式验证通过")
-        except json.JSONDecodeError as e:
-            print(f"JSON解析错误: {e}")
-            print("API返回的不是有效的JSON格式")
-            # 创建标注器实例
-        annotator = ImageAnnotator(result, "temporary.jpg")
-        
-        # 加载图片
-        annotator.load_image()
-        
-        # 绘制标注
-        annotator.draw_annotations()
-        
-        # 显示结果
-        annotator.show_result()
-        
-        # 将标注后的图片显示在预览区域
-        annotated_image = cv2.cvtColor(annotator.image, cv2.COLOR_BGR2RGB)
-        height, width, channel = annotated_image.shape
-        bytes_per_line = 3 * width
-        q_img = QImage(annotated_image.data, width, height, bytes_per_line, QImage.Format_RGB888)
-        pixmap = QPixmap.fromImage(q_img)
-        scaled_pixmap = pixmap.scaled(self.annotated_preview.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        self.annotated_preview.setPixmap(scaled_pixmap)
-        
-        # 隐藏加载动画
-        self.loading_label.hide()
-        
-        # 生成随机文件名
-        random_chars = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
-        new_filename = f"{random_chars}.jpg"
-        img_dir = os.path.join(img_dir, new_filename)
-        # 保存结果
-        annotator.save_result(output_path=img_dir)
-        # 保存返回的JSON数据
-        json_filename = os.path.splitext(new_filename)[0] + '.json'
-        json_path = os.path.join(os.path.dirname(img_dir), json_filename)
-        with open(json_path, 'w', encoding='utf-8') as json_file:
-            json.dump(result, json_file, ensure_ascii=False, indent=4)
+                print(f"Failed to download image. Status code: {response.status_code}")
+            
+            try:
+
+                # 使用正则表达式提取 ```json ``` 中间的值
+                pattern = r'```json\s*([\s\S]*?)\s*```'
+                match = re.search(pattern, result)
+
+                if match:
+                    json_content = match.group(1)
+                    print("提取的JSON内容:", json_content)
+                    # 尝试解析JSON
+                    result=json.loads(json_content)
+                else:
+                    print("未找到符合条件的JSON内容")
+                    # 尝试解析JSON
+                    result=json.loads(result)
+                    print("JSON格式验证通过")
+            except json.JSONDecodeError as e:
+                print(f"JSON解析错误: {e}")
+                print("API返回的不是有效的JSON格式")
+                # 创建标注器实例
+            annotator = ImageAnnotator(result, "temporary.jpg")
+            
+            # 加载图片
+            annotator.load_image()
+            
+            # 绘制标注
+            annotator.draw_annotations()
+            
+            # 显示结果
+            annotator.show_result()
+            
+            # 将标注后的图片显示在预览区域
+            annotated_image = cv2.cvtColor(annotator.image, cv2.COLOR_BGR2RGB)
+            height, width, channel = annotated_image.shape
+            bytes_per_line = 3 * width
+            q_img = QImage(annotated_image.data, width, height, bytes_per_line, QImage.Format_RGB888)
+            pixmap = QPixmap.fromImage(q_img)
+            scaled_pixmap = pixmap.scaled(self.annotated_preview.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            self.annotated_preview.setPixmap(scaled_pixmap)
+            
+            # 隐藏加载动画
+            self.loading_label.hide()
+            
+            # 生成随机文件名
+            random_chars = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
+            new_filename = f"{random_chars}.jpg"
+            img_dir = os.path.join(img_dir, new_filename)
+            # 保存结果
+            annotator.save_result(output_path=img_dir)
+            # 保存返回的JSON数据
+            json_filename = os.path.splitext(new_filename)[0] + '.json'
+            json_path = os.path.join(os.path.dirname(img_dir), json_filename)
+            with open(json_path, 'w', encoding='utf-8') as json_file:
+                json.dump(result, json_file, ensure_ascii=False, indent=4)
+        except Exception as e:
+            print(f"处理过程中出现错误: {e}")
+        finally:
+            # 无论是否出错，请求完成后都启用按钮
+            self.button.setEnabled(True)
+    def start_annotation(self):
+        # 创建并启动新线程
+        thread = threading.Thread(target=self.start_annotation_thread)
+        thread.start()
 
 
 
